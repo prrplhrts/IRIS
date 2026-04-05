@@ -53,6 +53,8 @@ dependencies {
     implementation(libs.androidx.camera.video)
     implementation(libs.androidx.camera.extensions)
 
+    implementation("com.google.android.gms:play-services-tflite-java:16.1.0")
+
 }
 dependencies {
     implementation("com.airbnb.android:lottie:6.4.0") // Check for the latest version

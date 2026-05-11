@@ -1,37 +1,210 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/home_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000"
-    android:padding="24dp"
+    android:clickable="true"
+    android:focusable="true"
     tools:context=".HomeActivity">
 
-    <TextView
-        android:id="@+id/iris_title"
+    <!-- Full-screen background image, scales to fill any device -->
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:src="@drawable/home_background"
+        android:scaleType="centerCrop"
+        android:contentDescription="Background" />
+
+    <!-- ═══ Logo + Title Group (centered vertically, offset slightly upward) ═══ -->
+    <LinearLayout
+        android:id="@+id/logo_group"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_centerHorizontal="true"
-        android:layout_marginTop="60dp"
-
-        android:textColor="#FFFFFF"
-        android:textSize="28sp"
-        android:textStyle="bold" />
-
-    <com.airbnb.lottie.LottieAnimationView
-        android:id="@+id/start_orb_button"
-        android:layout_width="300dp"
-        android:layout_height="300dp"
         android:layout_centerInParent="true"
-        android:clickable="true"
-        android:focusable="true"
-        android:background="?android:attr/selectableItemBackgroundBorderless"
-        android:contentDescription="Start Navigation"
-        app:lottie_rawRes="@raw/siri_orb"
-        app:lottie_autoPlay="true"
-        app:lottie_loop="true" />
+        android:layout_marginBottom="80dp"
+        android:orientation="vertical"
+        android:gravity="center_horizontal">
 
+        <!-- Glow behind logo -->
+        <RelativeLayout
+            android:layout_width="200dp"
+            android:layout_height="200dp">
 
+            <View
+                android:id="@+id/logo_glow"
+                android:layout_width="250dp"
+                android:layout_height="250dp"
+                android:layout_centerInParent="true"
+                android:background="@drawable/glow_effect" />
+
+            <ImageView
+                android:id="@+id/iris_logo"
+                android:layout_width="180dp"
+                android:layout_height="180dp"
+                android:layout_centerInParent="true"
+                android:src="@drawable/iris_logo"
+                android:contentDescription="IRIS Logo" />
+
+        </RelativeLayout>
+
+        <!-- App Name -->
+        <TextView
+            android:id="@+id/iris_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="I.R.I.S"
+            android:textColor="#FFFFFF"
+            android:textSize="42sp"
+            android:textStyle="bold"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.15" />
+
+        <!-- Subtitle -->
+        <TextView
+            android:id="@+id/iris_subtitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Intelligent Real-time Image Sonification"
+            android:textColor="#99FFFFFF"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-light"
+            android:letterSpacing="0.05" />
+
+    </LinearLayout>
+
+    <!-- ═══ Bottom Prompt Text ═══ -->
+    <LinearLayout
+        android:id="@+id/bottom_prompt"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_marginBottom="48dp"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:alpha="0">
+
+        <TextView
+            android:id="@+id/prompt_welcome"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Welcome to IRIS."
+            android:textColor="#CCFFFFFF"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif" />
+
+        <TextView
+            android:id="@+id/prompt_question"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Would you like to activate the detection system?"
+            android:textColor="#CCFFFFFF"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif" />
+
+        <TextView
+            android:id="@+id/prompt_action_begin"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Double tap the screen to activate"
+            android:textColor="#99FFFFFF"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-light" />
+
+        <TextView
+            android:id="@+id/prompt_action_decline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Long press the screen to close"
+            android:textColor="#99FFFFFF"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-light" />
+
+    </LinearLayout>
+
+    <!-- ═══ Goodbye Overlay (initially hidden) ═══ -->
+    <FrameLayout
+        android:id="@+id/goodbye_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:visibility="gone"
+        android:alpha="0"
+        android:elevation="10dp">
+
+        <!-- Full-screen close background image -->
+        <ImageView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:src="@drawable/close_background"
+            android:scaleType="centerCrop"
+            android:contentDescription="Close Background" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginBottom="60dp"
+            android:orientation="vertical"
+            android:gravity="center_horizontal">
+
+            <!-- Glow behind logo (purple) -->
+            <RelativeLayout
+                android:layout_width="200dp"
+                android:layout_height="200dp">
+
+                <View
+                    android:id="@+id/goodbye_glow"
+                    android:layout_width="280dp"
+                    android:layout_height="280dp"
+                    android:layout_centerInParent="true"
+                    android:background="@drawable/glow_effect_purple"
+                    android:alpha="0" />
+
+                <ImageView
+                    android:id="@+id/goodbye_logo"
+                    android:layout_width="160dp"
+                    android:layout_height="160dp"
+                    android:layout_centerInParent="true"
+                    android:src="@drawable/iris_logo"
+                    android:contentDescription="IRIS Logo"
+                    android:alpha="0" />
+
+            </RelativeLayout>
+
+            <!-- Goodbye Title -->
+            <TextView
+                android:id="@+id/goodbye_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Goodbye"
+                android:textColor="#FFFFFF"
+                android:textSize="36sp"
+                android:textStyle="bold"
+                android:fontFamily="sans-serif-medium"
+                android:alpha="0" />
+
+            <!-- Subtitle -->
+            <TextView
+                android:id="@+id/goodbye_subtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="IRIS is closing."
+                android:textColor="#99FFFFFF"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-light"
+                android:alpha="0" />
+
+        </LinearLayout>
+
+    </FrameLayout>
 
 </RelativeLayout>

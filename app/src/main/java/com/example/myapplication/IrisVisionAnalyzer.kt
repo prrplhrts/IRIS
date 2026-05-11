@@ -67,30 +67,35 @@ class IrisVisionAnalyzer(
         val scaledBitmap = Bitmap.createScaledBitmap(bitmap, inputSize, inputSize, true)
         scaledBitmap.getPixels(intValues, 0, scaledBitmap.width, 0, 0, scaledBitmap.width, scaledBitmap.height)
 
+        // ── Signal 1: Average brightness ──
         var totalBrightness = 0f
-        var totalLocalContrast = 0f
         val step = 4 // Sample every 4th pixel for speed
+        val sampleCount = intValues.size / step
 
-        for (i in 0 until intValues.size - step step step) {
-            val p1 = intValues[i]
-            val p2 = intValues[i + 1]
-
-            // Fast luma calculation: (0.299R + 0.587G + 0.114B)
-            val luma1 = (0.299f * ((p1 shr 16) and 0xFF) + 0.587f * ((p1 shr 8) and 0xFF) + 0.114f * (p1 and 0xFF))
-            val luma2 = (0.299f * ((p2 shr 16) and 0xFF) + 0.587f * ((p2 shr 8) and 0xFF) + 0.114f * (p2 and 0xFF))
-
-            totalBrightness += luma1
-            totalLocalContrast += Math.abs(luma1 - luma2)
+        for (i in 0 until intValues.size step step) {
+            val p = intValues[i]
+            totalBrightness += (0.299f * ((p shr 16) and 0xFF) + 0.587f * ((p shr 8) and 0xFF) + 0.114f * (p and 0xFF))
         }
+        val avgBrightness = totalBrightness / sampleCount
 
-        val count = intValues.size / step
-        val avgBrightness = totalBrightness / count
-        val avgLocalContrast = totalLocalContrast / count
+        // ── Signal 2: Global variance of brightness ──
+        // Obstructed lens → virtually zero variance (every pixel is nearly identical).
+        // Low-light scene → still has noise/texture → measurable variance.
+        var sumSquaredDiff = 0f
+        for (i in 0 until intValues.size step step) {
+            val p = intValues[i]
+            val luma = (0.299f * ((p shr 16) and 0xFF) + 0.587f * ((p shr 8) and 0xFF) + 0.114f * (p and 0xFF))
+            val diff = luma - avgBrightness
+            sumSquaredDiff += diff * diff
+        }
+        val variance = sumSquaredDiff / sampleCount
 
-        // Logic: 
-        // 1. If it's obstructed, avgLocalContrast is extremely low (near 0).
-        // 2. Extremely strict thresholds: Contrast < 1.2 (no noise) and Brightness < 60
-        val isFrameObstructed = avgLocalContrast < 1.2f && avgBrightness < 60f
+        // ── Detection Logic ──
+        // Obstruction: low global variance means every pixel is nearly identical (blocked lens).
+        // A real scene, even in low light, has noise/texture producing measurable variance.
+        val isFrameObstructed = variance < 15f
+
+        Log.d("IRIS_LIGHT", "Brightness=%.1f  Variance=%.1f  ObsScore=$obstructionScore".format(avgBrightness, variance))
 
         if (isFrameObstructed) {
             obstructionScore = (obstructionScore + 1).coerceAtMost(10)
@@ -106,9 +111,8 @@ class IrisVisionAnalyzer(
 
         obstructionListener(isObstructed)
 
-        // If not confirmed as a physical obstruction AND the current frame doesn't 
-        // look like a potential one, only then allow low light fallback.
-        // This prevents "Low Light" from flickering during the transition to "Obstruction".
+        // Low light: moderately dark but NOT obstructed (has real scene texture).
+        // Only trigger when we're confident it's NOT an obstruction.
         if (!isObstructed && !isFrameObstructed && avgBrightness < 50f) {
             lowLightListener()
         }

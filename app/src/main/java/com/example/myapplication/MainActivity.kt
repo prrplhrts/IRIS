@@ -1,6 +1,8 @@
 package com.example.myapplication
 
 import android.Manifest
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -9,12 +11,17 @@ import android.content.pm.PackageManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.Vibrator
 import android.os.VibrationEffect
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import android.util.Size
+import android.view.MotionEvent
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -47,18 +54,26 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var lowLightWarningOverlay: LinearLayout
     private lateinit var lowLightWarningTitle: TextView
     private lateinit var lowLightWarningSubtitle: TextView
-    private lateinit var lowLightWarningIcon: ImageView
     private lateinit var obstructionWarningOverlay: LinearLayout
     private lateinit var obstructionWarningTitle: TextView
     private lateinit var obstructionWarningSubtitle: TextView
-    private lateinit var obstructionWarningIcon: ImageView
     private lateinit var batteryWarningOverlay: LinearLayout
     private lateinit var batteryWarningTitle: TextView
     private lateinit var batteryWarningSubtitle: TextView
-    private lateinit var batteryWarningIcon: ImageView
-    private lateinit var lowLightWarningTag: TextView
-    private lateinit var obstructionWarningTag: TextView
     private lateinit var toneGenerator: android.media.ToneGenerator
+
+    // Goodbye overlay views
+    private lateinit var goodbyeOverlay: FrameLayout
+    private lateinit var goodbyeLogo: ImageView
+    private lateinit var goodbyeGlow: View
+    private lateinit var goodbyeTitle: TextView
+    private lateinit var goodbyeSubtitle: TextView
+
+    // Long-press detection
+    private val longPressHandler = Handler(Looper.getMainLooper())
+    private var longPressRunnable: Runnable? = null
+    private val LONG_PRESS_DURATION = 1000L
+    private var isClosing = false
 
     private var tts: TextToSpeech? = null
     private var lastSpokenTime: Long = 0
@@ -124,18 +139,37 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         lowLightWarningOverlay = findViewById(R.id.lowLightWarningOverlay)
         lowLightWarningTitle = findViewById(R.id.lowLightWarningTitle)
         lowLightWarningSubtitle = findViewById(R.id.lowLightWarningSubtitle)
-        lowLightWarningIcon = findViewById(R.id.lowLightWarningIcon)
         obstructionWarningOverlay = findViewById(R.id.obstructionWarningOverlay)
         obstructionWarningTitle = findViewById(R.id.obstructionWarningTitle)
         obstructionWarningSubtitle = findViewById(R.id.obstructionWarningSubtitle)
-        obstructionWarningIcon = findViewById(R.id.obstructionWarningIcon)
         batteryWarningOverlay = findViewById(R.id.batteryWarningOverlay)
         batteryWarningTitle = findViewById(R.id.batteryWarningTitle)
         batteryWarningSubtitle = findViewById(R.id.batteryWarningSubtitle)
-        batteryWarningIcon = findViewById(R.id.batteryWarningIcon)
-        lowLightWarningTag = findViewById(R.id.lowLightWarningTag)
-        obstructionWarningTag = findViewById(R.id.obstructionWarningTag)
         toneGenerator = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+
+        // Goodbye overlay
+        goodbyeOverlay = findViewById(R.id.goodbye_overlay)
+        goodbyeLogo = findViewById(R.id.goodbye_logo)
+        goodbyeGlow = findViewById(R.id.goodbye_glow)
+        goodbyeTitle = findViewById(R.id.goodbye_title)
+        goodbyeSubtitle = findViewById(R.id.goodbye_subtitle)
+
+        // Long-press to close app
+        viewFinder.setOnTouchListener { _, event ->
+            if (isClosing) return@setOnTouchListener true
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    longPressRunnable = Runnable {
+                        playGoodbyeSequence()
+                    }
+                    longPressHandler.postDelayed(longPressRunnable!!, LONG_PRESS_DURATION)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
+                }
+            }
+            true
+        }
 
         // Receiver registration moved to onInit so TTS has time to warm up first
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
@@ -238,8 +272,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 vibrator.vibrate(longArrayOf(0, 150, 100, 150), -1)
             }
             
-            // Set Red Color for Low Light to maintain consistency
-            lowLightWarningTag.background.setTint(android.graphics.Color.parseColor("#D32F2F"))
+
             
             speakOut("WARNING: The camera detects low lighting environment.")
             lastLowLightTime = currentTime
@@ -273,8 +306,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     vibrator.vibrate(longArrayOf(0, 100, 50, 100, 50, 100, 50, 100), -1)
                 }
                 
-                // Set Bright Red Color for Obstruction
-                obstructionWarningTag.background.setTint(android.graphics.Color.parseColor("#D32F2F"))
+
                 
                 speakOut("WARNING: There is obstruction on the camera.")
                 lastObstructionTime = currentTime
@@ -346,8 +378,97 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         baseContext, Manifest.permission.CAMERA
     ) == PackageManager.PERMISSION_GRANTED
 
+    private fun playGoodbyeSequence() {
+        if (isClosing) return
+        isClosing = true
+
+        // Speak the goodbye message
+        tts?.speak("IRIS is now closing. Goodbye", TextToSpeech.QUEUE_FLUSH, null, "GOODBYE")
+
+        // Set utterance listener to finish the app after TTS completes
+        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) {
+                if (utteranceId == "GOODBYE") {
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        finishAffinity()
+                    }, 1200)
+                }
+            }
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) {}
+        })
+
+        lifecycleScope.launch {
+            // Step 1: Show the goodbye overlay (fade in the background)
+            runOnUiThread {
+                goodbyeOverlay.visibility = View.VISIBLE
+                goodbyeOverlay.animate()
+                    .alpha(1f)
+                    .setDuration(400)
+                    .start()
+            }
+            delay(300)
+
+            // Step 2: Fade in the logo
+            runOnUiThread {
+                goodbyeLogo.animate()
+                    .alpha(1f)
+                    .setDuration(500)
+                    .start()
+            }
+            delay(200)
+
+            // Step 3: Fade in the purple glow with a pulse
+            runOnUiThread {
+                goodbyeGlow.animate()
+                    .alpha(1f)
+                    .scaleX(1.1f)
+                    .scaleY(1.1f)
+                    .setDuration(600)
+                    .start()
+
+                ObjectAnimator.ofPropertyValuesHolder(
+                    goodbyeGlow,
+                    PropertyValuesHolder.ofFloat("scaleX", 1.1f, 1.25f),
+                    PropertyValuesHolder.ofFloat("scaleY", 1.1f, 1.25f),
+                    PropertyValuesHolder.ofFloat("alpha", 1f, 0.5f)
+                ).apply {
+                    duration = 1500
+                    repeatCount = ObjectAnimator.INFINITE
+                    repeatMode = ObjectAnimator.REVERSE
+                    startDelay = 600
+                    start()
+                }
+            }
+            delay(300)
+
+            // Step 4: Fade in "Goodbye" title
+            runOnUiThread {
+                goodbyeTitle.translationY = 20f
+                goodbyeTitle.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(500)
+                    .start()
+            }
+            delay(300)
+
+            // Step 5: Fade in subtitle
+            runOnUiThread {
+                goodbyeSubtitle.translationY = 15f
+                goodbyeSubtitle.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(500)
+                    .start()
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
         try {
             unregisterReceiver(batteryReceiver)
         } catch (e: Exception) {

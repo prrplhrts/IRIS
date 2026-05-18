@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import android.graphics.Color
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
@@ -69,6 +70,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var goodbyeTitle: TextView
     private lateinit var goodbyeSubtitle: TextView
 
+    private lateinit var statusLayoutContainer: FrameLayout
+    private var isStatusDashboardOpen = false
+
+    // Status Dashboard View Hooks
+    private lateinit var ivMainStatusIcon: ImageView
+    private lateinit var tvMainStatusText: TextView
+    private lateinit var ivAppIcon: ImageView
+    private lateinit var tvAppState: TextView
+    private lateinit var tvBatteryState: TextView
+    private lateinit var tvCameraState: TextView
+
+
     // Long-press detection
     private val longPressHandler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
@@ -82,6 +95,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var lastWarnedBatteryPct = -1
     private var isObstructionFadingOut = false
 
+    // Tracks frame activity metrics for Device Health diagnostics
+    private var lastProcessedFrameTimestamp: Long = 0L
+
+    // Multi-touch tracking properties
+    private var isTwoFingerDetected = false
+    private var twoFingerTouchStartTime: Long = 0
+    private val MAX_TAP_DURATION = 350L
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
@@ -104,15 +124,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun triggerBatteryWarningSequence(batteryPercentage: Int) {
+        if (isStatusDashboardOpen || isClosing) return
         lifecycleScope.launch {
             // First warning
             speakOut("Warning. The device battery is at $batteryPercentage%. Please charge the device.")
             showWarning(batteryWarningOverlay, batteryWarningTitle, batteryWarningSubtitle, "LOW BATTERY\nPERCENTAGE", "Please connect to a power source\nto ensure continuous navigation.", 3000L)
-            
+
             // Wait for 3s display + 500ms fade + 5s interval before showing again
             delay(3000L + 500L + 5000L)
-            
-            // Second warning
+
+            // Second warning check again
+            if (isStatusDashboardOpen || isClosing) return@launch
+
             speakOut("Warning. The device battery is at $batteryPercentage%. Please charge the device.")
             showWarning(batteryWarningOverlay, batteryWarningTitle, batteryWarningSubtitle, "LOW BATTERY\nPERCENTAGE", "Please connect to a power source\nto ensure continuous navigation.", 3000L)
         }
@@ -145,7 +168,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         batteryWarningOverlay = findViewById(R.id.batteryWarningOverlay)
         batteryWarningTitle = findViewById(R.id.batteryWarningTitle)
         batteryWarningSubtitle = findViewById(R.id.batteryWarningSubtitle)
-        toneGenerator = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 100)
+        toneGenerator = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 100)
 
         // Goodbye overlay
         goodbyeOverlay = findViewById(R.id.goodbye_overlay)
@@ -153,19 +176,48 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         goodbyeGlow = findViewById(R.id.goodbye_glow)
         goodbyeTitle = findViewById(R.id.goodbye_title)
         goodbyeSubtitle = findViewById(R.id.goodbye_subtitle)
+        statusLayoutContainer = findViewById(R.id.status_layout_container)
 
-        // Long-press to close app
+        // Handles both Long-Press and Two-Finger Tap Gestures
         viewFinder.setOnTouchListener { _, event ->
             if (isClosing) return@setOnTouchListener true
-            when (event.action) {
+
+            val action = event.actionMasked
+
+            when (action) {
                 MotionEvent.ACTION_DOWN -> {
+                    // Core single finger long press trigger setup
                     longPressRunnable = Runnable {
                         playGoodbyeSequence()
                     }
                     longPressHandler.postDelayed(longPressRunnable!!, LONG_PRESS_DURATION)
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    // Multi-touch point added: cancel long press sequence immediately if a second finger joins
                     longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
+
+                    if (event.pointerCount == 2) {
+                        isTwoFingerDetected = true
+                        twoFingerTouchStartTime = System.currentTimeMillis()
+                    }
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
+
+                    if (isTwoFingerDetected) {
+                        val duration = System.currentTimeMillis() - twoFingerTouchStartTime
+                        if (duration < MAX_TAP_DURATION) {
+                            performSystemDiagnosticCheck()
+                        }
+                        isTwoFingerDetected = false
+                    }
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
+                    isTwoFingerDetected = false
                 }
             }
             true
@@ -222,6 +274,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     var frameCount = 0
                     it.setAnalyzer(cameraExecutor, object : ImageAnalysis.Analyzer {
                         override fun analyze(image: ImageProxy) {
+                            lastProcessedFrameTimestamp = System.currentTimeMillis()
                             frameCount++
                             if (frameCount % 3 != 0) {  // Process every 3rd frame to prevent lag
                                 image.close()
@@ -251,6 +304,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun triggerAudioWarning(detectedObject: String) {
+        if (isStatusDashboardOpen || isClosing) return
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastSpokenTime > 3000) {
             Log.d("IRIS", detectedObject)
@@ -260,6 +314,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun triggerLowLightWarning() {
+        if (isStatusDashboardOpen || isClosing) return
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastLowLightTime > 5000) {
             Log.d("IRIS", "Triggering low light warning")
@@ -281,6 +336,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleObstructionWarning(isObstructed: Boolean) {
+        if (isStatusDashboardOpen || isClosing) {
+            if (obstructionWarningOverlay.visibility == View.VISIBLE) {
+                runOnUiThread { obstructionWarningOverlay.visibility = View.GONE }
+            }
+            return
+        }
         val currentTime = System.currentTimeMillis()
         if (isObstructed) {
             isObstructionFadingOut = false // Reset immediately
@@ -357,16 +418,150 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
+
+    /**
+     * SYSTEM HARDWARE DIAGNOSTICS METHOD
+     * Evaluates metrics, transitions screen dynamically based on system health state, and announces data vocally.
+     */
+    private fun performSystemDiagnosticCheck() {
+        if (isStatusDashboardOpen || isClosing) return
+        val isAppWorking = true
+
+        // 1. Measure real hardware battery metrics
+        val batteryManager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+        val batteryLevel = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+
+        // 2. Measure live camera tracking flow frame updates
+        val isFrameFlowing = (System.currentTimeMillis() - lastProcessedFrameTimestamp) < 2500
+        val isCameraActive = isFrameFlowing && (batteryLevel > 15)
+
+        // Calculate combined device functional status parameters
+        val isSystemHealthy = isAppWorking && isCameraActive && (batteryLevel > 15)
+
+        // 3. DYNAMIC LAYOUT INFLATION: Load the exact XML file needed into the container
+        isStatusDashboardOpen = true
+        runOnUiThread {
+            // Immediately suppress any active warning overlays
+            lowLightWarningOverlay.visibility = View.GONE
+            obstructionWarningOverlay.visibility = View.GONE
+            batteryWarningOverlay.visibility = View.GONE
+
+            statusLayoutContainer.removeAllViews()
+            val layoutId = if (isSystemHealthy) R.layout.activity_status_healthy else R.layout.activity_status_error
+            layoutInflater.inflate(layoutId, statusLayoutContainer, true)
+            statusLayoutContainer.visibility = View.VISIBLE
+
+            // 4. Bind view hooks for layout controls dynamically at runtime after inflation
+            ivMainStatusIcon = findViewById(R.id.iv_main_status_icon)
+            tvMainStatusText = findViewById(R.id.tv_main_status_text)
+            ivAppIcon = findViewById(R.id.iv_app_icon)
+            tvAppState = findViewById(R.id.tv_app_state)
+            tvBatteryState = findViewById(R.id.tv_battery_state)
+            tvCameraState = findViewById(R.id.tv_camera_state)
+
+            // 5. Apply programmatic structural updates to match the loaded layout
+            if (isSystemHealthy) {
+                ivMainStatusIcon.setImageResource(R.drawable.monitor_green)
+                tvMainStatusText.text = "System healthy"
+                tvMainStatusText.setTextColor(Color.parseColor("#00FF00"))
+
+                ivAppIcon.setImageResource(R.drawable.check)
+                tvAppState.text = "Running"
+                tvAppState.setTextColor(Color.parseColor("#00FF00"))
+
+                tvBatteryState.text = "$batteryLevel%"
+                tvBatteryState.setTextColor(Color.parseColor("#00FF00"))
+
+                tvCameraState.text = "Active"
+                tvCameraState.setTextColor(Color.parseColor("#00FF00"))
+            } else {
+                ivMainStatusIcon.setImageResource(R.drawable.monitor_red)
+                tvMainStatusText.text = "System Error!"
+                tvMainStatusText.setTextColor(Color.parseColor("#FF0000"))
+
+                ivAppIcon.setImageResource(R.drawable.x)
+                tvAppState.text = if (isAppWorking) "Running" else "Stopped"
+                tvAppState.setTextColor(if (isAppWorking) Color.parseColor("#00FF00") else Color.parseColor("#FF0000"))
+
+                tvBatteryState.text = "$batteryLevel%"
+                tvBatteryState.setTextColor(if (batteryLevel > 15) Color.parseColor("#00FF00") else Color.parseColor("#FF0000"))
+
+                tvCameraState.text = if (isCameraActive) "Active" else "Inactive"
+                tvCameraState.setTextColor(if (isCameraActive) Color.parseColor("#00FF00") else Color.parseColor("#FF0000"))
+            }
+        }
+
+        // 6. Build spoken diagnostic vocal array strings
+        val speechOutput = StringBuilder()
+        if (isSystemHealthy) {
+            speechOutput.append("System is healthy. ")
+        } else {
+            speechOutput.append("System error detected. ")
+        }
+        speechOutput.append("Battery is at $batteryLevel percent. ")
+        if (isCameraActive) {
+            speechOutput.append("Camera is active.")
+        } else {
+            speechOutput.append("Camera is inactive.")
+        }
+
+        // Call the speech engine directly with the tracking ID bundle
+        val params = Bundle()
+        params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "DIAGNOSTIC_ID")
+        tts?.speak(speechOutput.toString(), TextToSpeech.QUEUE_FLUSH, params, "DIAGNOSTIC_ID")
+    }
+
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.setLanguage(Locale.US)
-            
+
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) {
+                    when (utteranceId) {
+                        "DIAGNOSTIC_ID" -> {
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                if (isStatusDashboardOpen) {
+                                    closeStatusDashboard()
+                                }
+                            }, 2000)
+                        }
+                        "GOODBYE" -> {
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                finishAffinity()
+                            }, 1200)
+                        }
+                    }
+                }
+                @Deprecated("Deprecated in Java")
+                override fun onError(utteranceId: String?) {
+                    when (utteranceId) {
+                        "DIAGNOSTIC_ID" -> closeStatusDashboard()
+                        "GOODBYE" -> finishAffinity()
+                    }
+                }
+
+                override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                    when (utteranceId) {
+                        "DIAGNOSTIC_ID" -> closeStatusDashboard()
+                        "GOODBYE" -> {
+                            if (interrupted) {
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    finishAffinity()
+                                }, 500)
+                            }
+                        }
+                    }
+                }
+            })
+
             // Register battery receiver ONLY AFTER TTS is fully ready
             registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         }
     }
 
     private fun speakOut(text: String) {
+        if (isStatusDashboardOpen || isClosing) return
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "")
     }
 
@@ -383,21 +578,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         isClosing = true
 
         // Speak the goodbye message
-        tts?.speak("IRIS is now closing. Goodbye", TextToSpeech.QUEUE_FLUSH, null, "GOODBYE")
-
-        // Set utterance listener to finish the app after TTS completes
-        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {}
-            override fun onDone(utteranceId: String?) {
-                if (utteranceId == "GOODBYE") {
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        finishAffinity()
-                    }, 1200)
-                }
-            }
-            @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) {}
-        })
+        val params = Bundle()
+        params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "GOODBYE")
+        tts?.speak("IRIS is now closing. Goodbye", TextToSpeech.QUEUE_FLUSH, params, "GOODBYE")
 
         lifecycleScope.launch {
             // Step 1: Show the goodbye overlay (fade in the background)
@@ -478,5 +661,47 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         toneGenerator.release()
         tts?.stop()
         tts?.shutdown()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+
+        when (keyCode) {
+            android.view.KeyEvent.KEYCODE_VOLUME_UP -> {
+                audioManager.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_RAISE, android.media.AudioManager.FLAG_SHOW_UI)
+                announceVolume(audioManager)
+                return true
+            }
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                audioManager.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_LOWER, android.media.AudioManager.FLAG_SHOW_UI)
+                announceVolume(audioManager)
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    private fun announceVolume(audioManager: android.media.AudioManager) {
+        val currentVolume = audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        val maxVolume = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+        val percent = (currentVolume.toDouble() / maxVolume * 100).toInt()
+
+        val text = "Volume at $percent percent"
+
+        // We use a Bundle to avoid the warning notification you saw
+        val params = Bundle()
+        params.putString(android.speech.tts.TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "VOLUME_ID")
+
+        tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, params, "VOLUME_ID")
+
+        toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 100)
+    }
+
+    private fun closeStatusDashboard() {
+        isStatusDashboardOpen = false
+        runOnUiThread {
+            statusLayoutContainer.visibility = View.GONE
+            statusLayoutContainer.removeAllViews()
+        }
     }
 }

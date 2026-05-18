@@ -70,8 +70,10 @@ class HomeActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         startLogoBreathingAnimation()
 
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+
         tts = TextToSpeech(this, this)
-        toneGenerator = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+        toneGenerator = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
 
         homeRoot.setOnTouchListener { _, event ->
             if (isClosing) return@setOnTouchListener true
@@ -264,4 +266,36 @@ class HomeActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         toneGenerator.release()
         super.onDestroy()
     }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        val audioManager = getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+
+        when (keyCode) {
+            android.view.KeyEvent.KEYCODE_VOLUME_UP -> {
+                audioManager.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_RAISE, android.media.AudioManager.FLAG_SHOW_UI)
+                announceVolume(audioManager)
+                return true
+            }
+            android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                audioManager.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_LOWER, android.media.AudioManager.FLAG_SHOW_UI)
+                announceVolume(audioManager)
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    private fun announceVolume(audioManager: android.media.AudioManager) {
+        val currentVolume = audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        val maxVolume = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+        val percent = (currentVolume.toDouble() / maxVolume * 100).toInt()
+
+        val text = "Volume at $percent percent"
+        // QUEUE_FLUSH ensures the feedback is instant
+        tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "VOLUME_ID")
+
+        // Play the beep
+        toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 100)
+    }
 }
+

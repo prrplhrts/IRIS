@@ -297,5 +297,44 @@ class HomeActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         // Play the beep
         toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 100)
     }
+    private var isSettingsOpening = false
+    private var isThreeFingerDetected = false
+    private var threeFingerStartX = 0f
+    
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        val action = event.actionMasked
+        
+        if (event.pointerCount == 3) {
+            val currentX = (event.getX(0) + event.getX(1) + event.getX(2)) / 3
+            
+            if (!isThreeFingerDetected) {
+                isThreeFingerDetected = true
+                threeFingerStartX = currentX
+            } else if (action == MotionEvent.ACTION_MOVE) {
+                val dx = threeFingerStartX - currentX
+                if (Math.abs(dx) > 150) {
+                    isThreeFingerDetected = false
+                    openSettings()
+                }
+            }
+        }
+        
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            isThreeFingerDetected = false
+        }
+        
+        return super.dispatchTouchEvent(event)
+    }
+
+    private fun openSettings() {
+        if (isSettingsOpening || isClosing) return
+        isSettingsOpening = true
+        
+        tts?.speak("Opening Settings.", TextToSpeech.QUEUE_ADD, null, null)
+        val intent = Intent(this, SettingsActivity::class.java)
+        startActivity(intent)
+        
+        homeRoot.postDelayed({ isSettingsOpening = false }, 2000)
+    }
 }
 

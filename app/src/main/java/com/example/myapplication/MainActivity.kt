@@ -90,15 +90,23 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
     private var lastSpokenTime: Long = 0
+    //rainn
+    private var latestDetectedObject: String = ""
     private var lastLowLightTime: Long = 0
     private var lastObstructionTime: Long = 0
     private var lastWarnedBatteryPct = -1
     private var isObstructionFadingOut = false
 
+    private var isThreeFingerDetected = false
+    private var threeFingerStartX = 0f
+    private val SWIPE_THRESHOLD = 150 
+    private var isSettingsOpening = false
+
+
     // Tracks frame activity metrics for Device Health diagnostics
     private var lastProcessedFrameTimestamp: Long = 0L
 
-    // Multi-touch tracking properties
+    // Multitouch tracking properties
     private var isTwoFingerDetected = false
     private var twoFingerTouchStartTime: Long = 0
     private val MAX_TAP_DURATION = 350L
@@ -124,7 +132,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun triggerBatteryWarningSequence(batteryPercentage: Int) {
-        if (isStatusDashboardOpen || isClosing) return
+        if (isStatusDashboardOpen || isClosing || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
         lifecycleScope.launch {
             // First warning
             speakOut("Warning. The device battery is at $batteryPercentage%. Please charge the device.")
@@ -139,6 +147,28 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             speakOut("Warning. The device battery is at $batteryPercentage%. Please charge the device.")
             showWarning(batteryWarningOverlay, batteryWarningTitle, batteryWarningSubtitle, "LOW BATTERY\nPERCENTAGE", "Please connect to a power source\nto ensure continuous navigation.", 3000L)
         }
+    }
+
+    private fun openSettings() {
+        if (isSettingsOpening || isClosing) return
+        isSettingsOpening = true
+        
+        // Provide haptic/audio feedback safely based on API level
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(100)
+        }
+        
+        // Use QUEUE_ADD to avoid cutting off other speech
+        tts?.speak("Opening settings", TextToSpeech.QUEUE_ADD, null, "")
+
+        val intent = Intent(this, SettingsActivity::class.java)
+        startActivity(intent)
+        
+        // Reset flag after a delay to prevent duplicate starts
+        viewFinder.postDelayed({ isSettingsOpening = false }, 2000)
     }
 
     private val activityResultLauncher =
@@ -186,20 +216,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
             when (action) {
                 MotionEvent.ACTION_DOWN -> {
-                    // Core single finger long press trigger setup
-                    longPressRunnable = Runnable {
-                        playGoodbyeSequence()
-                    }
+                    longPressRunnable = Runnable { playGoodbyeSequence() }
                     longPressHandler.postDelayed(longPressRunnable!!, LONG_PRESS_DURATION)
                 }
 
                 MotionEvent.ACTION_POINTER_DOWN -> {
-                    // Multi-touch point added: cancel long press sequence immediately if a second finger joins
                     longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
 
+                    // Handle 2 fingers (for Diagnostic)
                     if (event.pointerCount == 2) {
                         isTwoFingerDetected = true
                         twoFingerTouchStartTime = System.currentTimeMillis()
+                    }
+
+                    // Handle 3 fingers (for Settings)
+                    if (event.pointerCount == 3) {
+                        isThreeFingerDetected = true
+                        isTwoFingerDetected = false 
+                        threeFingerStartX = (event.getX(0) + event.getX(1) + event.getX(2)) / 3
                     }
                 }
 
@@ -208,19 +242,50 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                     if (isTwoFingerDetected) {
                         val duration = System.currentTimeMillis() - twoFingerTouchStartTime
-                        if (duration < MAX_TAP_DURATION) {
+                        if (duration < 350L) { // MAX_TAP_DURATION
                             performSystemDiagnosticCheck()
                         }
                         isTwoFingerDetected = false
+                    }
+                    isThreeFingerDetected = false
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    // Detect swipe distance while 3 fingers are down
+                    if (isThreeFingerDetected && event.pointerCount >= 3) {
+                        val currentX = (event.getX(0) + event.getX(1) + event.getX(2)) / 3
+                        val deltaX = threeFingerStartX - currentX 
+
+                        if (Math.abs(deltaX) > SWIPE_THRESHOLD) {
+                            isThreeFingerDetected = false
+                            openSettings()
+                        }
                     }
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
                     longPressRunnable?.let { longPressHandler.removeCallbacks(it) }
                     isTwoFingerDetected = false
+                    isThreeFingerDetected = false
                 }
             }
-            true
+            false
+        }
+
+
+        //rainn
+        // Manual tap implementation for Tap to Scan mode
+        viewFinder.setOnClickListener {
+            val sharedPrefs = getSharedPreferences("IrisSettings", Context.MODE_PRIVATE)
+            val currentScanMode = sharedPrefs.getString("scan_mode", "Continuous")
+
+            if (currentScanMode == "Tap to Scan") {
+                if (latestDetectedObject.isNotEmpty()) {
+                    speakOut("$latestDetectedObject ahead")
+                } else {
+                    speakOut("Scanning, please hold steady.")
+                }
+            }
         }
 
         // Receiver registration moved to onInit so TTS has time to warm up first
@@ -264,8 +329,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 .setTargetResolution(Size(640, 480))
                 .build()
                 .also {
+                    // 1. Open the preferences database
+                    val sharedPrefs = getSharedPreferences("IrisSettings", Context.MODE_PRIVATE)
+
                     val analyzer = IrisVisionAnalyzer(this, { detectedObject ->
-                        triggerAudioWarning(detectedObject)
+                        // 2. Read the current mode chosen in settings
+                        val currentScanMode = sharedPrefs.getString("scan_mode", "Continuous")
+
+                        if (currentScanMode == "Continuous") {
+                            // Speak immediately if in continuous mode
+                            triggerAudioWarning(detectedObject)
+                        } else {
+                            // Tap to Scan mode: Keep it silent, just remember what object it is
+                            latestDetectedObject = detectedObject
+                        }
                     }, {
                         triggerLowLightWarning()
                     }, { isObstructed ->
@@ -274,6 +351,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     var frameCount = 0
                     it.setAnalyzer(cameraExecutor, object : ImageAnalysis.Analyzer {
                         override fun analyze(image: ImageProxy) {
+                            if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                                image.close()
+                                return
+                            }
                             lastProcessedFrameTimestamp = System.currentTimeMillis()
                             frameCount++
                             if (frameCount % 3 != 0) {  // Process every 3rd frame to prevent lag
@@ -304,7 +385,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun triggerAudioWarning(detectedObject: String) {
-        if (isStatusDashboardOpen || isClosing) return
+        if (isStatusDashboardOpen || isClosing || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastSpokenTime > 3000) {
             Log.d("IRIS", detectedObject)
@@ -314,7 +395,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun triggerLowLightWarning() {
-        if (isStatusDashboardOpen || isClosing) return
+        if (isStatusDashboardOpen || isClosing || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastLowLightTime > 5000) {
             Log.d("IRIS", "Triggering low light warning")
@@ -336,7 +417,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleObstructionWarning(isObstructed: Boolean) {
-        if (isStatusDashboardOpen || isClosing) {
+        if (isStatusDashboardOpen || isClosing || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
             if (obstructionWarningOverlay.visibility == View.VISIBLE) {
                 runOnUiThread { obstructionWarningOverlay.visibility = View.GONE }
             }
@@ -447,17 +528,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             batteryWarningOverlay.visibility = View.GONE
 
             statusLayoutContainer.removeAllViews()
-            val layoutId = if (isSystemHealthy) R.layout.activity_status_healthy else R.layout.activity_status_error
-            layoutInflater.inflate(layoutId, statusLayoutContainer, true)
+            val layoutId = R.layout.activity_status_healthy
+            val inflatedView = layoutInflater.inflate(layoutId, statusLayoutContainer, true)
             statusLayoutContainer.visibility = View.VISIBLE
 
             // 4. Bind view hooks for layout controls dynamically at runtime after inflation
-            ivMainStatusIcon = findViewById(R.id.iv_main_status_icon)
-            tvMainStatusText = findViewById(R.id.tv_main_status_text)
-            ivAppIcon = findViewById(R.id.iv_app_icon)
-            tvAppState = findViewById(R.id.tv_app_state)
-            tvBatteryState = findViewById(R.id.tv_battery_state)
-            tvCameraState = findViewById(R.id.tv_camera_state)
+            ivMainStatusIcon = inflatedView.findViewById(R.id.iv_main_status_icon)
+            tvMainStatusText = inflatedView.findViewById(R.id.tv_main_status_text)
+            ivAppIcon = inflatedView.findViewById(R.id.iv_app_icon)
+            tvAppState = inflatedView.findViewById(R.id.tv_app_state)
+            tvBatteryState = inflatedView.findViewById(R.id.tv_battery_state)
+            tvCameraState = inflatedView.findViewById(R.id.tv_camera_state)
 
             // 5. Apply programmatic structural updates to match the loaded layout
             if (isSystemHealthy) {

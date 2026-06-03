@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/settings_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A192F"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/tvSettingsTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:text="Settings"
+        android:textColor="#FFFFFF"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/tvSettingsSub"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Configuration Options"
+        android:textColor="#64FFDA"
+        android:textSize="14sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvSettingsTitle" />
+
+    <!-- Language Module -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/moduleLanguageConfig"
+        android:layout_width="match_parent"
+        android:layout_height="100dp"
+        android:layout_marginTop="40dp"
+        android:background="@drawable/status_background"
+        android:padding="16dp"
+        android:visibility="visible"
+        app:layout_constraintTop_toBottomOf="@id/tvSettingsSub"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <ImageView
+            android:id="@+id/ivLangIcon"
+            android:layout_width="50dp"
+            android:layout_height="50dp"
+            android:src="@drawable/language_icon"
+            android:padding="5dp"
+            android:scaleType="fitCenter"
+            app:tint="#64FFDA"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            android:contentDescription="Language Icon" />
+
+        <TextView
+            android:id="@+id/tvLangLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:text="Language"
+            android:textColor="#8892B0"
+            android:textSize="16sp"
+            app:layout_constraintStart_toEndOf="@id/ivLangIcon"
+            app:layout_constraintTop_toTopOf="@id/ivLangIcon" />
+
+        <TextView
+            android:id="@+id/tvCurrentLanguageValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="English"
+            android:textColor="#42FF80"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            app:layout_constraintStart_toStartOf="@id/tvLangLabel"
+            app:layout_constraintBottom_toBottomOf="@id/ivLangIcon" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <!-- Scanning Mode Module -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/moduleScanConfig"
+        android:layout_width="match_parent"
+        android:layout_height="100dp"
+        android:layout_marginTop="20dp"
+        android:background="@drawable/status_background"
+        android:padding="16dp"
+        android:visibility="visible"
+        app:layout_constraintTop_toBottomOf="@id/moduleLanguageConfig"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <ImageView
+            android:id="@+id/ivScanIcon"
+            android:layout_width="50dp"
+            android:layout_height="50dp"
+            android:src="@drawable/scan_icon"
+            android:padding="5dp"
+            android:scaleType="fitCenter"
+            app:tint="#64FFDA"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            android:contentDescription="Scanning Icon" />
+
+        <TextView
+            android:id="@+id/tvScanLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:text="Scanning Mode"
+            android:textColor="#8892B0"
+            android:textSize="16sp"
+            app:layout_constraintStart_toEndOf="@id/ivScanIcon"
+            app:layout_constraintTop_toTopOf="@id/ivScanIcon" />
+
+        <TextView
+            android:id="@+id/tvCurrentScanValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Continuous"
+            android:textColor="#42FF80"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            app:layout_constraintStart_toStartOf="@id/tvScanLabel"
+            app:layout_constraintBottom_toBottomOf="@id/ivScanIcon" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <TextView
+        android:id="@+id/tvGestureHelp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="20dp"
+        android:text="Scroll Up/Down: Select Language or Mode\nSwipe Left/Right: Change Setting Value\nDouble Tap (2 Fingers): Exit Settings"
+        android:textColor="#8892B0"
+        android:textSize="14sp"
+        android:textAlignment="center"
+        android:lineSpacingExtra="4dp"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -6,6 +6,6 @@ computer vision and spatial audio, IRIS transforms visual data into actionable a
 
 
 Android (Kotlin)
-YOLOv11 Nano, COCO dataset
+YOLOv11, COCO dataset
 TensorFlow Lite, Android CameraX API, Google Text-to-Speech
 

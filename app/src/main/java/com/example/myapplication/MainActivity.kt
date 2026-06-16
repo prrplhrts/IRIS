@@ -63,10 +63,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var batteryWarningSubtitle: TextView
     private lateinit var toneGenerator: android.media.ToneGenerator
 
-    // SENSOR FUSION: MiDaS Depth Estimator instance
     private lateinit var midasEstimator: MidasDepthEstimator
 
-    // Goodbye overlay views
+    // 1. Declare the analyzer globally so the tap listener can command it
+    private var irisAnalyzer: IrisVisionAnalyzer? = null
+
     private lateinit var goodbyeOverlay: FrameLayout
     private lateinit var goodbyeLogo: ImageView
     private lateinit var goodbyeGlow: View
@@ -76,7 +77,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var statusLayoutContainer: FrameLayout
     private var isStatusDashboardOpen = false
 
-    // Status Dashboard View Hooks
     private lateinit var ivMainStatusIcon: ImageView
     private lateinit var tvMainStatusText: TextView
     private lateinit var ivAppIcon: ImageView
@@ -84,17 +84,19 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var tvBatteryState: TextView
     private lateinit var tvCameraState: TextView
 
-    // Long-press detection
     private val longPressHandler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
     private val LONG_PRESS_DURATION = 1000L
     private var isClosing = false
 
     private var tts: TextToSpeech? = null
-    private var lastSpokenTime: Long = 0
-    private var latestDetectedObject: String = ""
-    private var lastLowLightTime: Long = 0
-    private var lastObstructionTime: Long = 0
+
+    // @Volatile ensures changes made in the Camera background thread are instantly visible to UI Taps
+    @Volatile private var lastSpokenTime: Long = 0
+    @Volatile private var latestDetectedObject: String = ""
+    @Volatile private var lastLowLightTime: Long = 0
+    @Volatile private var lastObstructionTime: Long = 0
+
     private var lastWarnedBatteryPct = -1
     private var isObstructionFadingOut = false
 
@@ -103,13 +105,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val SWIPE_THRESHOLD = 150
     private var isSettingsOpening = false
 
-    // Tracks frame activity metrics for Device Health diagnostics
     private var lastProcessedFrameTimestamp: Long = 0L
 
-    // Multitouch tracking properties
     private var isTwoFingerDetected = false
     private var twoFingerTouchStartTime: Long = 0
     private val MAX_TAP_DURATION = 350L
+
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
@@ -201,8 +202,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         goodbyeSubtitle = findViewById(R.id.goodbye_subtitle)
         statusLayoutContainer = findViewById(R.id.status_layout_container)
 
-        // NOTE: midasEstimator was removed from here. It is now inside initTfLiteAndStartCamera()!
-
         viewFinder.setOnTouchListener { _, event ->
             if (isClosing) return@setOnTouchListener true
 
@@ -259,13 +258,25 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             false
         }
 
+        // ── THE SILVER BULLET TAP TO SCAN FIX ──
         viewFinder.setOnClickListener {
+            if (isClosing) return@setOnClickListener
+
             val sharedPrefs = getSharedPreferences("IrisSettings", Context.MODE_PRIVATE)
             val currentScanMode = sharedPrefs.getString("scan_mode", "Continuous")
 
             if (currentScanMode == "Tap to Scan") {
-                if (latestDetectedObject.isNotEmpty()) {
-                    speakOut(latestDetectedObject)
+                val currentObject = latestDetectedObject
+
+                if (currentObject.isNotEmpty()) {
+                    speakOut(currentObject)
+
+                    // Instantly wipe the variable out of memory
+                    latestDetectedObject = ""
+
+                    // Physically wipe the temporal memory banks in the AI
+                    // This stops the background thread from restoring "Ghost" objects
+                    irisAnalyzer?.forceClearMemory()
                 } else {
                     speakOut("Scanning, please hold steady.")
                 }
@@ -289,9 +300,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun initTfLiteAndStartCamera() {
         TfLite.initialize(this).addOnSuccessListener {
-            // SUCCESS! Google Play Services is awake. Now we can safely build MiDaS.
             midasEstimator = MidasDepthEstimator(this)
-
             startCamera()
         }.addOnFailureListener {
             Log.e("IRIS", "Failed to initialize TFLite", it)
@@ -316,10 +325,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 .also {
                     val sharedPrefs = getSharedPreferences("IrisSettings", Context.MODE_PRIVATE)
 
-                    // Pass the MiDaS Estimator into the IrisVisionAnalyzer
-                    val analyzer = IrisVisionAnalyzer(this, midasEstimator, { detectedObject, distance ->
+                    // 2. Assign the created analyzer to our global variable
+                    irisAnalyzer = IrisVisionAnalyzer(this, midasEstimator, { detectedObject, distance ->
 
-                        // Formatting logic for TTS output: "(object) x meters ahead"
+                        // Clear memory explicitly if the scene is empty
+                        if (detectedObject.isEmpty()) {
+                            latestDetectedObject = ""
+                            return@IrisVisionAnalyzer
+                        }
+
                         val ttsMessage = if (distance > 0.1f) {
                             val distanceStr = String.format(Locale.US, "%.1f", distance)
                             "$detectedObject $distanceStr meters ahead"
@@ -353,7 +367,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                 return
                             }
                             try {
-                                analyzer.analyze(image)
+                                // 3. Use the global instance to run analysis
+                                irisAnalyzer?.analyze(image)
                             } catch (e: Exception) {
                                 Log.e("IRIS", "Image analysis failed", e)
                             } finally {
@@ -699,7 +714,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         tts?.stop()
         tts?.shutdown()
 
-        // Safety check to prevent a crash on closing if MiDaS never initialized
         if (::midasEstimator.isInitialized) {
             midasEstimator.close()
         }

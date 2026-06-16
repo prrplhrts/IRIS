@@ -12,8 +12,14 @@ import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 
-// Data class to hold both the label and the bounding box coordinates
 data class YoloDetection(val label: String, val cx: Float, val cy: Float, val w: Float, val h: Float)
+
+// MEMORY TRACKER CLASS
+data class TrackedObject(
+    var distance: Float,
+    var framesSinceLastSeen: Int,
+    var consecutiveHits: Int
+)
 
 class IrisVisionAnalyzer(
     private val context: Context,
@@ -30,6 +36,16 @@ class IrisVisionAnalyzer(
     private val OBSTRUCTION_THRESHOLD = 3
     private val OBSTRUCTION_RECOVERY_SPEED = 5
     private val inputSize = 640
+
+    // TEMPORAL SMOOTHING STATE
+    private val trackingMemory = mutableMapOf<String, TrackedObject>()
+    private val MAX_MISSES = 5 // Remember a dropped object for 5 frames
+    private val MIN_HITS = 2   // Must see an object twice to prove it's not a hallucination
+
+    // THE KILL SWITCH
+    fun forceClearMemory() {
+        trackingMemory.clear()
+    }
 
     private val byteBuffer = ByteBuffer.allocateDirect(4 * inputSize * inputSize * 3).apply {
         order(ByteOrder.nativeOrder())
@@ -62,7 +78,7 @@ class IrisVisionAnalyzer(
         val scaledBitmap = Bitmap.createScaledBitmap(bitmap, inputSize, inputSize, true)
         scaledBitmap.getPixels(intValues, 0, scaledBitmap.width, 0, 0, scaledBitmap.width, scaledBitmap.height)
 
-        // Light & Obstruction Logic
+        // ── Light & Obstruction Logic ──
         var totalBrightness = 0f
         val step = 4
         val sampleCount = intValues.size / step
@@ -94,7 +110,7 @@ class IrisVisionAnalyzer(
             lowLightListener()
         }
 
-        // YOLO AI Execution
+        // ── YOLO AI Execution & Memory Tracker ──
         if (interpreter != null) {
             byteBuffer.rewind()
             for (i in 0 until inputSize * inputSize) {
@@ -107,21 +123,49 @@ class IrisVisionAnalyzer(
             val outputArray = Array(1) { Array(84) { FloatArray(8400) } }
 
             try {
-                byteBuffer.rewind() // CRITICAL FIX: Ensure position is 0 before AI runs
+                byteBuffer.rewind()
                 interpreter?.run(byteBuffer, outputArray)
                 val detection = parseYoloOutput(outputArray)
 
+                // 1. Age all existing memories
+                for (entry in trackingMemory.entries) {
+                    entry.value.framesSinceLastSeen++
+                }
+
+                // 2. Process current frame's detection
                 if (detection != null) {
                     val depthMap = midasEstimator.estimateDepth(bitmap)
+                    val distanceMeters = if (depthMap != null) calculateDistance(detection, depthMap) else -1f
 
-                    if (depthMap != null) {
-                        val distanceMeters = calculateDistance(detection, depthMap)
-                        listener(detection.label, distanceMeters)
+                    if (trackingMemory.containsKey(detection.label)) {
+                        val track = trackingMemory[detection.label]!!
+                        track.distance = distanceMeters // Update distance
+                        track.framesSinceLastSeen = 0   // Reset miss counter
+                        track.consecutiveHits++         // Increase confidence
                     } else {
-                        Log.e("IRIS_DEPTH", "MiDaS array returned null. Check initialization.")
-                        listener(detection.label, -1f)
+                        trackingMemory[detection.label] = TrackedObject(distanceMeters, 0, 1)
                     }
                 }
+
+                // 3. Clean up old memories (Forget objects not seen in 5 frames)
+                trackingMemory.entries.removeIf { it.value.framesSinceLastSeen > MAX_MISSES }
+
+                // 4. Find the most reliable & closest object to announce
+                val bestTrack = trackingMemory.entries
+                    .filter { it.value.consecutiveHits >= MIN_HITS }
+                    .minByOrNull {
+                        val dist = if (it.value.distance > 0) it.value.distance else 999f
+                        (it.value.framesSinceLastSeen * 1000) + dist
+                    }
+
+                // 5. Send to Text-To-Speech (GHOST MEMORY FIX IS HERE)
+                if (bestTrack != null) {
+                    listener(bestTrack.key, bestTrack.value.distance)
+                } else {
+                    // Send an empty string so MainActivity knows the screen is physically empty
+                    listener("", -1f)
+                }
+
             } catch (e: Exception) {
                 Log.e("IRIS_ERROR", "AI MATH CRASH: ${e.message}")
             }
@@ -145,7 +189,7 @@ class IrisVisionAnalyzer(
             }
         }
 
-        if (bestConfidence > 0.25f && bestClassIndex in labels.indices) {
+        if (bestConfidence > 0.35f && bestClassIndex in labels.indices) {
             val cx = output[0][0][bestBoxIndex]
             val cy = output[0][1][bestBoxIndex]
             val w = output[0][2][bestBoxIndex]
@@ -156,14 +200,11 @@ class IrisVisionAnalyzer(
     }
 
     private fun calculateDistance(detection: YoloDetection, depthMap: FloatArray): Float {
-        // SMART CHECK: Detect if YOLO exported normalized (0.0-1.0) or absolute (0-640) coordinates
-        // and map them cleanly to the MiDaS 256x256 grid.
         val mCx = if (detection.cx <= 1f) detection.cx * 256f else detection.cx * (256f / 640f)
         val mCy = if (detection.cy <= 1f) detection.cy * 256f else detection.cy * (256f / 640f)
         val mW = if (detection.w <= 1f) detection.w * 256f else detection.w * (256f / 640f)
         val mH = if (detection.h <= 1f) detection.h * 256f else detection.h * (256f / 640f)
 
-        // Define the bounding box on the 256x256 grid
         val startX = (mCx - mW / 2).toInt().coerceIn(0, 255)
         val endX = (mCx + mW / 2).toInt().coerceIn(0, 255)
         val startY = (mCy - mH / 2).toInt().coerceIn(0, 255)
@@ -172,7 +213,6 @@ class IrisVisionAnalyzer(
         var sumDepth = 0f
         var count = 0
 
-        // Average the pixels specifically inside the object's box
         for (y in startY..endY) {
             for (x in startX..endX) {
                 sumDepth += depthMap[y * 256 + x]
@@ -180,21 +220,11 @@ class IrisVisionAnalyzer(
             }
         }
 
-        // If the box is 0 pixels, fail gracefully
-        if (count == 0) {
-            Log.e("IRIS_DEPTH", "Bounding box mapped to 0 pixels.")
-            return -1f
-        }
+        if (count == 0) return -1f
 
         val avgDepth = sumDepth / count
+        val safeDepth = java.lang.Math.max(avgDepth, 0.1f)
 
-        // MiDaS outputs *inverse* depth (larger numbers = closer objects).
-        // 500f is a starting heuristic scalar.
-        val safeDepth = java.lang.Math.max(avgDepth, 0.1f) // Prevent division by zero
-        val distanceMeters = 500f / safeDepth
-
-        Log.d("IRIS_DEPTH", "Target: ${detection.label} | Pixels Analyzed: $count | Raw Inverse Depth: $avgDepth | Est. Meters: $distanceMeters")
-
-        return distanceMeters
+        return 500f / safeDepth
     }
 }

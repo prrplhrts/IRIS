@@ -50,6 +50,7 @@ import android.graphics.Color
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private lateinit var viewFinder: PreviewView
+    private lateinit var boundingBoxOverlay: BoundingBoxOverlay
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var vibrator: Vibrator
     private lateinit var lowLightWarningOverlay: LinearLayout
@@ -182,6 +183,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         setContentView(R.layout.activity_main)
 
         viewFinder = findViewById(R.id.viewFinder)
+        boundingBoxOverlay = findViewById(R.id.boundingBoxOverlay)
         tts = TextToSpeech(this, this)
         vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
         lowLightWarningOverlay = findViewById(R.id.lowLightWarningOverlay)
@@ -277,6 +279,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     // Physically wipe the temporal memory banks in the AI
                     // This stops the background thread from restoring "Ghost" objects
                     irisAnalyzer?.forceClearMemory()
+                    boundingBoxOverlay.setDetection(null, -1f, 0f, 0f, 0f, 0f, 0, 0, 0)
                 } else {
                     speakOut("Scanning, please hold steady.")
                 }
@@ -352,6 +355,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         triggerLowLightWarning()
                     }, { isObstructed ->
                         handleObstructionWarning(isObstructed)
+                    }, { label, distance, left, top, right, bottom, rotation, width, height ->
+                        runOnUiThread {
+                            boundingBoxOverlay.setDetection(
+                                label, distance, left, top, right, bottom, rotation, width, height
+                            )
+                        }
                     })
                     var frameCount = 0
                     it.setAnalyzer(cameraExecutor, object : ImageAnalysis.Analyzer {

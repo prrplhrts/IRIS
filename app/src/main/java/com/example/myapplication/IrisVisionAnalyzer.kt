@@ -26,7 +26,8 @@ class IrisVisionAnalyzer(
     private val midasEstimator: MidasDepthEstimator,
     private val listener: (String, Float) -> Unit,
     private val lowLightListener: () -> Unit,
-    private val obstructionListener: (Boolean) -> Unit
+    private val obstructionListener: (Boolean) -> Unit,
+    private val boundingBoxListener: ((String?, Float, Float, Float, Float, Float, Int, Int, Int) -> Unit)? = null
 ) : ImageAnalysis.Analyzer {
 
     private var interpreter: InterpreterApi? = null
@@ -161,9 +162,36 @@ class IrisVisionAnalyzer(
                 // 5. Send to Text-To-Speech (GHOST MEMORY FIX IS HERE)
                 if (bestTrack != null) {
                     listener(bestTrack.key, bestTrack.value.distance)
+
+                    if (detection != null && detection.label == bestTrack.key) {
+                        val normCx = if (detection.cx <= 1f) detection.cx else detection.cx / 640f
+                        val normCy = if (detection.cy <= 1f) detection.cy else detection.cy / 640f
+                        val normW = if (detection.w <= 1f) detection.w else detection.w / 640f
+                        val normH = if (detection.h <= 1f) detection.h else detection.h / 640f
+
+                        val rawLeft = normCx - normW / 2f
+                        val rawTop = normCy - normH / 2f
+                        val rawRight = normCx + normW / 2f
+                        val rawBottom = normCy + normH / 2f
+
+                        boundingBoxListener?.invoke(
+                            bestTrack.key,
+                            bestTrack.value.distance,
+                            rawLeft,
+                            rawTop,
+                            rawRight,
+                            rawBottom,
+                            imageProxy.imageInfo.rotationDegrees,
+                            imageProxy.width,
+                            imageProxy.height
+                        )
+                    } else {
+                        boundingBoxListener?.invoke(null, -1f, 0f, 0f, 0f, 0f, 0, 0, 0)
+                    }
                 } else {
                     // Send an empty string so MainActivity knows the screen is physically empty
                     listener("", -1f)
+                    boundingBoxListener?.invoke(null, -1f, 0f, 0f, 0f, 0f, 0, 0, 0)
                 }
 
             } catch (e: Exception) {

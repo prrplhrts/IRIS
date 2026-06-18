@@ -135,14 +135,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun triggerBatteryWarningSequence(batteryPercentage: Int) {
         if (isStatusDashboardOpen || isClosing || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
         lifecycleScope.launch {
-            speakOut("Warning. The device battery is at $batteryPercentage%. Please charge the device.")
+            speakOut(getLocalizedSpeech("BATTERY_WARNING", batteryPercentage))
             showWarning(batteryWarningOverlay, batteryWarningTitle, batteryWarningSubtitle, "LOW BATTERY\nPERCENTAGE", "Please connect to a power source\nto ensure continuous navigation.", 3000L)
 
             delay(3000L + 500L + 5000L)
 
             if (isStatusDashboardOpen || isClosing) return@launch
 
-            speakOut("Warning. The device battery is at $batteryPercentage%. Please charge the device.")
+            speakOut(getLocalizedSpeech("BATTERY_WARNING", batteryPercentage))
             showWarning(batteryWarningOverlay, batteryWarningTitle, batteryWarningSubtitle, "LOW BATTERY\nPERCENTAGE", "Please connect to a power source\nto ensure continuous navigation.", 3000L)
         }
     }
@@ -158,7 +158,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             vibrator.vibrate(100)
         }
 
-        tts?.speak("Opening settings", TextToSpeech.QUEUE_ADD, null, "")
+        tts?.speak(getLocalizedSpeech("OPENING_SETTINGS"), TextToSpeech.QUEUE_ADD, null, "")
 
         val intent = Intent(this, SettingsActivity::class.java)
         startActivity(intent)
@@ -278,7 +278,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     // This stops the background thread from restoring "Ghost" objects
                     irisAnalyzer?.forceClearMemory()
                 } else {
-                    speakOut("Scanning, please hold steady.")
+                    speakOut(getLocalizedSpeech("SCANNING"))
                 }
             }
         }
@@ -296,6 +296,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         } else {
             requestPermissions()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Ensure TTS matches the selected language when returning from Settings
+        updateTTSLanguage()
     }
 
     private fun initTfLiteAndStartCamera() {
@@ -336,9 +342,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
                         val ttsMessage = if (distance > 0.1f) {
                             val distanceStr = String.format(Locale.US, "%.1f", distance)
-                            "$detectedObject $distanceStr meters ahead"
+                            getLocalizedSpeech("OBJECT_AHEAD_DIST", detectedObject, distanceStr)
                         } else {
-                            "$detectedObject ahead"
+                            getLocalizedSpeech("OBJECT_AHEAD", detectedObject)
                         }
 
                         val currentScanMode = sharedPrefs.getString("scan_mode", "Continuous")
@@ -414,7 +420,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 vibrator.vibrate(longArrayOf(0, 150, 100, 150), -1)
             }
 
-            speakOut("WARNING: The camera detects low lighting environment.")
+            speakOut(getLocalizedSpeech("LOW_LIGHT"))
             lastLowLightTime = currentTime
             lastSpokenTime = currentTime
         }
@@ -449,7 +455,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     vibrator.vibrate(longArrayOf(0, 100, 50, 100, 50, 100, 50, 100), -1)
                 }
 
-                speakOut("WARNING: There is obstruction on the camera.")
+                speakOut(getLocalizedSpeech("OBSTRUCTION"))
                 lastObstructionTime = currentTime
                 lastSpokenTime = currentTime
             }
@@ -554,15 +560,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         val speechOutput = StringBuilder()
         if (isSystemHealthy) {
-            speechOutput.append("System is healthy. ")
+            speechOutput.append(getLocalizedSpeech("SYS_HEALTHY"))
         } else {
-            speechOutput.append("System error detected. ")
+            speechOutput.append(getLocalizedSpeech("SYS_ERROR"))
         }
-        speechOutput.append("Battery is at $batteryLevel percent. ")
+        speechOutput.append(getLocalizedSpeech("SYS_BATTERY", batteryLevel))
         if (isCameraActive) {
-            speechOutput.append("Camera is active.")
+            speechOutput.append(getLocalizedSpeech("SYS_CAM_ACTIVE"))
         } else {
-            speechOutput.append("Camera is inactive.")
+            speechOutput.append(getLocalizedSpeech("SYS_CAM_INACTIVE"))
         }
 
         val params = Bundle()
@@ -572,7 +578,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            tts?.setLanguage(Locale.US)
+            updateTTSLanguage()
 
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {}
@@ -637,7 +643,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         val params = Bundle()
         params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "GOODBYE")
-        tts?.speak("IRIS is now closing. Goodbye", TextToSpeech.QUEUE_FLUSH, params, "GOODBYE")
+        tts?.speak(getLocalizedSpeech("GOODBYE"), TextToSpeech.QUEUE_FLUSH, params, "GOODBYE")
 
         lifecycleScope.launch {
             runOnUiThread {
@@ -742,7 +748,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val maxVolume = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
         val percent = (currentVolume.toDouble() / maxVolume * 100).toInt()
 
-        val text = "Volume at $percent percent"
+        val text = getLocalizedSpeech("VOLUME", percent)
 
         val params = Bundle()
         params.putString(android.speech.tts.TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "VOLUME_ID")
@@ -757,6 +763,74 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         runOnUiThread {
             statusLayoutContainer.visibility = View.GONE
             statusLayoutContainer.removeAllViews()
+        }
+    }
+
+    // --- TTS LANGUAGE HELPER FUNCTIONS ---
+
+    private fun updateTTSLanguage() {
+        val sharedPrefs = getSharedPreferences("IrisSettings", Context.MODE_PRIVATE)
+        // Defaults to Filipino if no setting exists yet!
+        val isFilipino = sharedPrefs.getString("language", "Filipino") == "Filipino"
+
+        if (isFilipino) {
+            // Aggressively attempt all known Locale combinations for Tagalog/Filipino
+            val localesToTry = listOf(
+                Locale("fil", "PH"), // Standard Filipino
+                Locale("tl", "PH"),  // Standard Tagalog
+                Locale("fil"),       // Filipino without region
+                Locale("tl")         // Tagalog without region
+            )
+
+            var isLanguageSet = false
+            var isDataMissing = false
+
+            for (locale in localesToTry) {
+                val result = tts?.setLanguage(locale)
+                if (result == TextToSpeech.LANG_AVAILABLE || result == TextToSpeech.LANG_COUNTRY_AVAILABLE || result == TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE) {
+                    isLanguageSet = true
+                    Log.d("IRIS", "Successfully set TTS to: ${locale.language}")
+                    break
+                } else if (result == TextToSpeech.LANG_MISSING_DATA) {
+                    isDataMissing = true
+                }
+            }
+
+            // WARNING FALLBACK: If the true Filipino voice is missing or the OEM Engine doesn't support it
+            if (!isLanguageSet) {
+                if (isDataMissing) {
+                    Log.e("IRIS", "Filipino TTS data is missing.")
+                    Toast.makeText(this, "Nawawala ang Filipino Voice Data.\n\nPaki-download ito sa 'Text-to-Speech Settings' ng iyong device upang maayos ang accent.", Toast.LENGTH_LONG).show()
+                } else {
+                    Log.e("IRIS", "Filipino TTS is not supported on this engine.")
+                    Toast.makeText(this, "Hindi suportado ang Filipino sa iyong TTS Engine.\n\nMangyaring i-install ang 'Google TTS' at gawin itong default sa iyong device settings.", Toast.LENGTH_LONG).show()
+                }
+            }
+        } else {
+            tts?.setLanguage(Locale.US)
+        }
+    }
+
+    private fun getLocalizedSpeech(key: String, vararg args: Any): String {
+        val sharedPrefs = getSharedPreferences("IrisSettings", Context.MODE_PRIVATE)
+        val isFilipino = sharedPrefs.getString("language", "Filipino") == "Filipino"
+
+        return when (key) {
+            "BATTERY_WARNING" -> if (isFilipino) "Babala. Ang baterya ay nasa ${args[0]} porsyento. Mangyaring i-charge ang device." else "Warning. The device battery is at ${args[0]} percent. Please charge the device."
+            "OPENING_SETTINGS" -> if (isFilipino) "Binubuksan ang settings." else "Opening settings."
+            "SCANNING" -> if (isFilipino) "Nagiiscan." else "Scanning, please hold steady."
+            "OBJECT_AHEAD_DIST" -> if (isFilipino) "May ${args[0]} sa layong ${args[1]} metro." else "${args[0]} ${args[1]} meters ahead"
+            "OBJECT_AHEAD" -> if (isFilipino) "May ${args[0]} sa unahan." else "${args[0]} ahead"
+            "LOW_LIGHT" -> if (isFilipino) "Babala: Madilim ang paligid." else "WARNING: The camera detects low lighting environment."
+            "OBSTRUCTION" -> if (isFilipino) "Babala: May nakaharang sa camera." else "WARNING: There is obstruction on the camera."
+            "SYS_HEALTHY" -> if (isFilipino) "Maayos ang sistema. " else "System is healthy. "
+            "SYS_ERROR" -> if (isFilipino) "May error sa sistema. " else "System error detected. "
+            "SYS_BATTERY" -> if (isFilipino) "Ang baterya ay nasa ${args[0]} porsyento. " else "Battery is at ${args[0]} percent. "
+            "SYS_CAM_ACTIVE" -> if (isFilipino) "Aktibo ang camera." else "Camera is active."
+            "SYS_CAM_INACTIVE" -> if (isFilipino) "Hindi aktibo ang camera." else "Camera is inactive."
+            "GOODBYE" -> if (isFilipino) "Nagsasara na ang IRIS. Paalam." else "IRIS is now closing. Goodbye"
+            "VOLUME" -> if (isFilipino) "Ang volume ay nasa ${args[0]} porsyento" else "Volume at ${args[0]} percent"
+            else -> ""
         }
     }
 }
